@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ImplantScan</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg:       #0a0f14;
+    --surface:  #111820;
+    --border:   #1e2d3d;
+    --accent:   #00c8ff;
+    --accent2:  #0066ff;
+    --text:     #e8f4f8;
+    --muted:    #4a6375;
+    --success:  #00e676;
+    --warning:  #ffab00;
+    --danger:   #ff4444;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── HEADER ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+
+  .logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: 2px;
+  }
+
+  .logo span { color: var(--muted); }
+
+  .session-id {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── MAIN ── */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── SCREENS ── */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .screen.active {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  /* ── SCREEN 1: START ── */
+  #screen-start .icon-wrap {
+    width: 90px;
+    height: 90px;
+    border-radius: 24px;
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 28px;
+    box-shadow: 0 0 40px rgba(0,200,255,0.2);
+  }
+
+  #screen-start h1 {
+    font-size: 26px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    text-align: center;
+  }
+
+  #screen-start p {
+    color: var(--muted);
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.7;
+    max-width: 300px;
+    margin-bottom: 40px;
+  }
+
+  .implant-count-selector {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 36px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 16px 24px;
+    width: 100%;
+    max-width: 320px;
+    justify-content: space-between;
+  }
+
+  .implant-count-selector label {
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  .count-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .count-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s;
+  }
+  .count-btn:active { border-color: var(--accent); }
+
+  #implant-count-display {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    color: var(--accent);
+    min-width: 28px;
+    text-align: center;
+  }
+
+  /* ── BUTTONS ── */
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    color: #000;
+    border: none;
+    border-radius: 14px;
+    padding: 16px 40px;
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    max-width: 320px;
+    transition: opacity 0.2s, transform 0.1s;
+  }
+  .btn-primary:active { opacity: 0.85; transform: scale(0.98); }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 13px 24px;
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn-secondary:active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── SCREEN 2: CAMERA ── */
+  #screen-camera {
+    padding: 0;
+    background: #000;
+  }
+
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .camera-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+  }
+
+  /* اطار التصوير */
+  .scan-frame {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .frame-corners {
+    width: 200px;
+    height: 200px;
+    position: relative;
+  }
+
+  .frame-corners::before,
+  .frame-corners::after,
+  .corner-br,
+  .corner-bl {
+    content: '';
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    border-color: var(--accent);
+    border-style: solid;
+  }
+  .frame-corners::before { top: 0; right: 0; border-width: 2px 2px 0 0; border-radius: 0 4px 0 0; }
+  .frame-corners::after  { bottom: 0; right: 0; border-width: 0 2px 2px 0; border-radius: 0 0 4px 0; }
+  .corner-br { top: 0; left: 0; border-width: 2px 0 0 2px; border-radius: 4px 0 0 0; }
+  .corner-bl { bottom: 0; left: 0; border-width: 0 0 2px 2px; border-radius: 0 0 0 4px; }
+
+  /* شريط الصور المصورة */
+  .capture-bar {
+    pointer-events: all;
+    padding: 16px 20px 32px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.85));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  /* progress */
+  .progress-wrap {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .progress-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 2px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+
+  .progress-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    min-width: 48px;
+    text-align: left;
+  }
+
+  /* زر التصوير */
+  .capture-controls {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .shutter-btn {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: #fff;
+    border: 4px solid rgba(255,255,255,0.3);
+    cursor: pointer;
+    transition: transform 0.1s, background 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.1);
+  }
+  .shutter-btn:active { transform: scale(0.92); background: var(--accent); }
+  .shutter-btn.captured { background: var(--success); }
+
+  .shutter-inner {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    border: 2px solid rgba(0,0,0,0.15);
+  }
+
+  .thumb-strip {
+    display: flex;
+    gap: 6px;
+    height: 48px;
+    overflow-x: auto;
+    width: 100%;
+    scrollbar-width: none;
+  }
+  .thumb-strip::-webkit-scrollbar { display: none; }
+
+  .thumb {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid var(--accent);
+    opacity: 0.8;
+  }
+
+  .done-btn-wrap {
+    width: 100%;
+  }
+
+  /* ── SCREEN 3: PROCESSING ── */
+  #screen-processing .pulse-ring {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 32px;
+    position: relative;
+    animation: pulse-ring 2s ease infinite;
+  }
+
+  @keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(0,200,255,0.4); }
+    70%  { box-shadow: 0 0 0 20px rgba(0,200,255,0); }
+    100% { box-shadow: 0 0 0 0 rgba(0,200,255,0); }
+  }
+
+  .processing-steps {
+    width: 100%;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 32px;
+  }
+
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--muted);
+    transition: all 0.3s;
+  }
+
+  .step-item.active {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  .step-item.done {
+    border-color: var(--success);
+    color: var(--success);
+  }
+
+  .step-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .step-item.active .step-dot { background: var(--accent); animation: blink 1s infinite; }
+  .step-item.done  .step-dot { background: var(--success); }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+
+  /* ── SCREEN 4: RESULTS ── */
+  #screen-results {
+    justify-content: flex-start;
+    padding-top: 20px;
+    overflow-y: auto;
+  }
+
+  .result-header {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .result-header h2 { font-size: 22px; margin-bottom: 6px; }
+  .result-header p  { color: var(--muted); font-size: 13px; }
+
+  .accuracy-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0,230,118,0.1);
+    border: 1px solid var(--success);
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 13px;
+    color: var(--success);
+    margin-bottom: 24px;
+  }
+
+  .implant-cards {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+
+  .implant-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .implant-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .implant-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    background: rgba(0,200,255,0.08);
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+
+  .implant-quality {
+    font-size: 12px;
+    color: var(--success);
+  }
+
+  .coords-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .coord-item {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 8px;
+    text-align: center;
+  }
+
+  .coord-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .coord-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .export-section {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .export-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'IBM Plex Sans Arabic', sans-serif;
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    width: 100%;
+    text-align: right;
+  }
+  .export-btn:active { border-color: var(--accent); }
+
+  .export-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 18px;
+  }
+
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">IMPLANT<span>SCAN</span></div>
+  <div class="session-id" id="session-id">—</div>
+</header>
+
+<main>
+
+  <!-- SCREEN 1: START -->
+  <div class="screen active" id="screen-start">
+    <div class="icon-wrap">
+      <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+        <circle cx="22" cy="22" r="10" stroke="#000" stroke-width="2"/>
+        <path d="M22 8V4M22 40v-4M8 22H4M40 22h-4" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+        <path d="M14 14l-3-3M33 33l-3-3M30 14l3-3M14 30l-3 3" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="22" cy="22" r="4" fill="#000"/>
+      </svg>
+    </div>
+    <h1>تحديد مواضع الزراعات</h1>
+    <p>صور الـ scan bodies من زوايا متعددة — النظام يحسب الإحداثيات تلقائياً</p>
+
+    <div class="implant-count-selector">
+      <label>عدد الزراعات</label>
+      <div class="count-controls">
+        <button class="count-btn" onclick="changeCount(-1)">−</button>
+        <div id="implant-count-display">2</div>
+        <button class="count-btn" onclick="changeCount(1)">+</button>
+      </div>
+    </div>
+
+    <button class="btn-primary" onclick="startCamera()">ابدأ التصوير</button>
+  </div>
+
+  <!-- SCREEN 2: CAMERA -->
+  <div class="screen" id="screen-camera">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none"></canvas>
+
+    <div class="camera-overlay">
+      <div class="scan-frame">
+        <div class="frame-corners">
+          <div class="corner-br"></div>
+          <div class="corner-bl"></div>
+        </div>
+      </div>
+
+      <div class="capture-bar">
+        <div class="thumb-strip" id="thumb-strip"></div>
+
+        <div class="progress-wrap">
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-label" id="progress-label">0 / 20</div>
+        </div>
+
+        <div class="capture-controls">
+          <button class="btn-secondary" onclick="goTo('screen-start')">إلغاء</button>
+          <button class="shutter-btn" id="shutter-btn" onclick="capturePhoto()">
+            <div class="shutter-inner"></div>
+          </button>
+          <button class="btn-secondary" id="done-capture-btn"
+            onclick="startProcessing()" style="opacity:0.3;pointer-events:none">
+            تحليل
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 3: PROCESSING -->
+  <div class="screen" id="screen-processing">
+    <div class="pulse-ring">
+      <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+        <path d="M22 8C14.268 8 8 14.268 8 22s6.268 14 14 14 14-6.268 14-14"
+              stroke="#00c8ff" stroke-width="2" stroke-linecap="round"/>
+        <animateTransform attributeName="transform" type="rotate"
+          from="0 22 22" to="360 22 22" dur="1s" repeatCount="indefinite"/>
+      </svg>
+    </div>
+
+    <h2 style="font-size:20px;margin-bottom:8px">جاري التحليل</h2>
+    <p style="color:var(--muted);font-size:13px;text-align:center">
+      يتم معالجة الصور وحساب مواضع الزراعات
+    </p>
+
+    <div class="processing-steps" id="processing-steps">
+      <div class="step-item" id="step-1">
+        <div class="step-dot"></div>
+        رفع الصور للسيرفر
+      </div>
+      <div class="step-item" id="step-2">
+        <div class="step-dot"></div>
+        Feature Detection
+      </div>
+      <div class="step-item" id="step-3">
+        <div class="step-dot"></div>
+        3D Reconstruction
+      </div>
+      <div class="step-item" id="step-4">
+        <div class="step-dot"></div>
+        حساب إحداثيات الزراعات
+      </div>
+    </div>
+  </div>
+
+  <!-- SCREEN 4: RESULTS -->
+  <div class="screen" id="screen-results">
+    <div class="result-header">
+      <h2>✓ اكتمل التحليل</h2>
+      <p id="result-subtitle">تم تحديد مواضع الزراعات بدقة</p>
+    </div>
+
+    <div class="accuracy-badge">
+      <span>●</span>
+      <span>دقة التحليل: ±0.08mm</span>
+    </div>
+
+    <div class="implant-cards" id="implant-cards"></div>
+
+    <div class="export-section">
+      <button class="export-btn" onclick="exportExocad()">
+        <div class="export-icon" style="background:rgba(0,102,255,0.15)">🦷</div>
+        <div>
+          <div style="font-weight:500">تصدير لـ Exocad</div>
+          <div style="font-size:12px;color:var(--muted)">ملف .constructionInfo</div>
+        </div>
+      </button>
+      <button class="export-btn" onclick="exportCSV()">
+        <div class="export-icon" style="background:rgba(0,230,118,0.1)">📊</div>
+        <div>
+          <div style="font-weight:500">تصدير CSV</div>
+          <div style="font-size:12px;color:var(--muted)">إحداثيات X Y Z</div>
+        </div>
+      </button>
+    </div>
+
+    <button class="btn-secondary" onclick="newScan()" style="max-width:360px;width:100%">
+      فحص جديد
+    </button>
+    <p class="hint" style="margin-top:12px">جلسة: <span id="result-session"></span></p>
+  </div>
+
+</main>
+
+<script>
+// ── State ──
+let implantCount  = 2;
+let capturedPhotos = [];
+let stream        = null;
+const MIN_PHOTOS  = 20;
+const MAX_PHOTOS  = 40;
+
+// Session ID
+const sessionId = 'IS-' + Date.now().toString(36).toUpperCase();
+document.getElementById('session-id').textContent = sessionId;
+document.getElementById('result-session').textContent = sessionId;
+
+// ── Navigation ──
+function goTo(screenId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(screenId).classList.add('active');
+}
+
+// ── Count ──
+function changeCount(delta) {
+  implantCount = Math.max(1, Math.min(6, implantCount + delta));
+  document.getElementById('implant-count-display').textContent = implantCount;
+}
+
+// ── Camera ──
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1920 },
+        height: { ideal: 1080 }
+      }
+    });
+    document.getElementById('video').srcObject = stream;
+    capturedPhotos = [];
+    updateProgress();
+    document.getElementById('thumb-strip').innerHTML = '';
+    goTo('screen-camera');
+  } catch(e) {
+    alert('تعذر فتح الكاميرا — تأكد من منح الإذن');
+  }
+}
+
+function capturePhoto() {
+  if (capturedPhotos.length >= MAX_PHOTOS) return;
+
+  const video  = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  canvas.width  = video.videoWidth  || 1280;
+  canvas.height = video.videoHeight || 720;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  capturedPhotos.push(dataUrl);
+
+  // Thumbnail
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.className = 'thumb';
+  const strip = document.getElementById('thumb-strip');
+  strip.appendChild(img);
+  strip.scrollLeft = strip.scrollWidth;
+
+  // Flash
+  const btn = document.getElementById('shutter-btn');
+  btn.classList.add('captured');
+  setTimeout(() => btn.classList.remove('captured'), 150);
+
+  updateProgress();
+}
+
+function updateProgress() {
+  const n    = capturedPhotos.length;
+  const pct  = Math.min(100, (n / MIN_PHOTOS) * 100);
+  document.getElementById('progress-fill').style.width  = pct + '%';
+  document.getElementById('progress-label').textContent = n + ' / ' + MIN_PHOTOS;
+
+  const doneBtn = document.getElementById('done-capture-btn');
+  if (n >= MIN_PHOTOS) {
+    doneBtn.style.opacity       = '1';
+    doneBtn.style.pointerEvents = 'all';
+  }
+}
+
+// ── Processing ──
+async function startProcessing() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); }
+  goTo('screen-processing');
+
+  const steps = ['step-1','step-2','step-3','step-4'];
+  const durations = [1200, 1800, 2500, 1000]; // ms لكل خطوة (demo)
+
+  for (let i = 0; i < steps.length; i++) {
+    document.getElementById(steps[i]).classList.add('active');
+    await delay(durations[i]);
+    document.getElementById(steps[i]).classList.remove('active');
+    document.getElementById(steps[i]).classList.add('done');
+  }
+
+  // TODO: هنا يصير الـ API call للسيرفر
+  const result = await sendToServer(capturedPhotos, implantCount);
+  // showResults(generateMockResults());
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── Mock Results (يتبدل بـ API حقيقي) ──
+function generateMockResults() {
+  const results = [];
+  for (let i = 0; i < implantCount; i++) {
+    results.push({
+      id: i + 1,
+      label: `زراعة ${i + 1}`,
+      x: (Math.random() * 20 - 10).toFixed(3),
+      y: (Math.random() * 20 - 10).toFixed(3),
+      z: (Math.random() * 5  -  2).toFixed(3),
+      angle_x: (Math.random() * 30 - 15).toFixed(1),
+      angle_y: (Math.random() * 30 - 15).toFixed(1),
+      angle_z: (Math.random() * 360).toFixed(1),
+      quality: Math.floor(Math.random() * 15 + 85)
+    });
+  }
+  return results;
+}
+
+function showResults(data) {
+  document.getElementById('result-subtitle').textContent =
+    `${implantCount} زراعة — ${capturedPhotos.length} صورة`;
+
+  const container = document.getElementById('implant-cards');
+  container.innerHTML = '';
+
+  data.forEach(imp => {
+    container.innerHTML += `
+      <div class="implant-card">
+        <div class="implant-card-header">
+          <div class="implant-label">SB-${String(imp.id).padStart(2,'0')}</div>
+          <div class="implant-quality">جودة ${imp.quality}%</div>
+        </div>
+        <div class="coords-grid">
+          <div class="coord-item">
+            <span class="coord-label">X (mm)</span>
+            <span class="coord-value">${imp.x}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Y (mm)</span>
+            <span class="coord-value">${imp.y}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Z (mm)</span>
+            <span class="coord-value">${imp.z}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Rx (°)</span>
+            <span class="coord-value">${imp.angle_x}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Ry (°)</span>
+            <span class="coord-value">${imp.angle_y}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">Rz (°)</span>
+            <span class="coord-value">${imp.angle_z}</span>
+          </div>
+        </div>
+      </div>`;
+  });
+
+  goTo('screen-results');
+}
+
+// ── Export ──
+function exportCSV() {
+  const cards = document.querySelectorAll('.implant-card');
+  let csv = 'Implant,X,Y,Z,Rx,Ry,Rz\n';
+  cards.forEach((c, i) => {
+    const vals = c.querySelectorAll('.coord-value');
+    csv += `SB-${String(i+1).padStart(2,'0')},`;
+    csv += Array.from(vals).map(v => v.textContent).join(',') + '\n';
+  });
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ImplantScan_${sessionId}.csv`;
+  a.click();
+}
+
+function exportExocad() {
+  alert('قريباً — يحتاج ربط بالسيرفر لإنتاج ملف .constructionInfo');
+}
+
+
+async function sendToServer(photos, numImplants) {
+  const API = "https://implant-scan-production.up.railway.app";
+  const formData = new FormData();
+  formData.append("num_implants", numImplants);
+
+  for (let i = 0; i < photos.length; i++) {
+    const res  = await fetch(photos[i]);
+    const blob = await res.blob();
+    formData.append("images", blob, `photo_${i}.jpg`);
+  }
+
+  const response = await fetch(`${API}/analyze`, {
+    method: "POST",
+    body: formData
+  });
+
+  if (!response.ok) throw new Error("Server error: " + response.status);
+  const data = await response.json();
+  if (!data.success) throw new Error(data.error || "فشل التحليل");
+
+  // تحويل response لـ format الـ UI
+  const results = data.implants.map(imp => ({
+    id:      imp.id,
+    label:   imp.label,
+    x:       imp.x,
+    y:       imp.y,
+    z:       imp.z,
+    angle_x: imp.angle_x,
+    angle_y: imp.angle_y,
+    angle_z: imp.angle_z,
+    quality: imp.quality
+  }));
+
+  showResults(results);
+}
+
+function newScan() {
+  capturedPhotos = [];
+  document.querySelectorAll('.step-item').forEach(s => {
+    s.classList.remove('active','done');
+  });
+  goTo('screen-start');
+}
+</script>
+</body>
+</html>
