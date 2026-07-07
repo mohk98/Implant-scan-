@@ -1,13 +1,27 @@
-from fastapi import FastAPI, UploadFile, File, Form
+"""
+ImplantScan Backend v2 — Multi-View Triangulation
+==================================================
+بدل الاعتماد على صورة وحدة (monocular pose)، نستخدم عدة إطارات (frames)
+من نفس الماركرات الثابتة، ونحسب المواضع النسبية بينها ثم نعمل
+robust averaging عبر كل الإطارات لتقليل الخطأ العشوائي بشكل كبير.
+
+الفكرة الرياضية:
+  لكل frame نحسب pose كل ماركر بالنسبة للكاميرا (solvePnP)
+  نختار ماركر مرجعي (reference) — عادة أقل ID موجود بأغلب الـ frames
+  نحسب التحويل من المرجع لكل ماركر ثاني بكل frame:
+      T_ref_to_B = inverse(T_cam_to_ref) @ T_cam_to_B
+  هذا يلغي خطأ "بعد الكاميرا عن الماركر" لأنه نسبي بين ماركرين بنفس الصورة
+  ثم نجمع كل التقديرات عبر كل الـ frames ونأخذ median/trimmed-mean
+  هذا يقلل الخطأ العشوائي بمعامل تقريبي 1/sqrt(N) عدد الإطارات
+"""
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Optional, Dict
 import numpy as np
 import cv2
-import traceback
-from typing import List
-import uvicorn
 
-app = FastAPI(title="ImplantScan API")
+app = FastAPI(title="ImplantScan Backend v2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,131 +30,209 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def decode_image(data: bytes):
-    arr = np.frombuffer(data, np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
-def detect_features(img):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    sift = cv2.SIFT_create(nfeatures=2000)
-    return sift.detectAndCompute(gray, None)
+# ═══════════════ Data Models ═══════════════
 
-def match_features(desc1, desc2):
-    if desc1 is None or desc2 is None:
-        return []
-    flann = cv2.FlannBasedMatcher({"algorithm":1,"trees":5},{"checks":50})
-    matches = flann.knnMatch(desc1, desc2, k=2)
-    return [m for m,n in matches if m.distance < 0.7*n.distance]
+class Corner(BaseModel):
+    x: float
+    y: float
 
-def get_ipad_K(w, h):
-    fx = (3.99/6.17)*w
-    return np.array([[fx,0,w/2],[0,fx,h/2],[0,0,1]], dtype=np.float64)
 
-def find_scan_bodies(img, num_implants):
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    enhanced = clahe.apply(gray)
-    circles = cv2.HoughCircles(
-        enhanced, cv2.HOUGH_GRADIENT,
-        dp=1, minDist=30, param1=50, param2=30,
-        minRadius=5, maxRadius=40)
-    centers = []
-    if circles is not None:
-        for x,y,r in np.round(circles[0]).astype(int)[:num_implants*2]:
-            centers.append((float(x),float(y),float(r)))
-    while len(centers) < num_implants:
-        i = len(centers)
-        centers.append((img.shape[1]*(i+1)/(num_implants+1), img.shape[0]*0.5, 15.0))
-    return centers[:num_implants]
+class MarkerDetection(BaseModel):
+    id: int
+    corners: List[Corner]   # 4 corners، بترتيب [TL, TR, BR, BL] (نفس ترتيب js-aruco2)
 
-def estimate_poses(images, K):
-    poses = [(np.eye(3), np.zeros((3,1)))]
-    kps_list, desc_list = [], []
-    for img in images:
-        kps, desc = detect_features(img)
-        kps_list.append(kps)
-        desc_list.append(desc)
-    prev_R, prev_t = np.eye(3), np.zeros((3,1))
-    for i in range(1, len(images)):
-        matches = match_features(desc_list[i-1], desc_list[i])
-        if len(matches) < 8:
-            poses.append((prev_R.copy(), prev_t.copy()))
+
+class FrameData(BaseModel):
+    width: int
+    height: int
+    markers: List[MarkerDetection]
+
+
+class TriangulateRequest(BaseModel):
+    frames: List[FrameData]
+    focal_length_px: float     # من الكالبريشن اللي التطبيق سواه
+    marker_size_mm: float = 8.0
+
+
+class MarkerResult(BaseModel):
+    id: int
+    x: float
+    y: float
+    z: float
+    num_observations: int
+    std_dev_mm: float          # مؤشر عدم اليقين — كل ما قل كان أدق
+
+
+class TriangulateResponse(BaseModel):
+    success: bool
+    reference_marker_id: Optional[int] = None
+    markers: List[MarkerResult]
+    total_frames_used: int
+    message: str = ""
+
+
+# ═══════════════ Core Math ═══════════════
+
+def build_object_points(size_mm: float) -> np.ndarray:
+    """
+    نقاط الزوايا الأربعة للماركر بإحداثياته المحلية الخاصة (z=0)
+    نفس ترتيب js-aruco2: [TL, TR, BR, BL]
+    """
+    h = size_mm / 2.0
+    return np.array([
+        [-h,  h, 0],   # TL
+        [ h,  h, 0],   # TR
+        [ h, -h, 0],   # BR
+        [-h, -h, 0],   # BL
+    ], dtype=np.float64)
+
+
+def solve_marker_pose(corners_px: np.ndarray, camera_matrix: np.ndarray,
+                       size_mm: float) -> Optional[np.ndarray]:
+    """
+    يحسب pose الماركر بالنسبة للكاميرا (transform 4x4: camera → marker)
+    يرجع None لو فشل الحساب
+    """
+    obj_pts = build_object_points(size_mm)
+    dist_coeffs = np.zeros((4, 1))  # نفترض بدون distortion كبير (كاميرات الآيباد الحديثة جيدة)
+
+    try:
+        ok, rvec, tvec = cv2.solvePnP(
+            obj_pts, corners_px, camera_matrix, dist_coeffs,
+            flags=cv2.SOLVEPNP_IPPE_SQUARE  # مخصص لمربعات — أدق وأسرع
+        )
+    except cv2.error:
+        ok = False
+
+    if not ok:
+        return None
+
+    R, _ = cv2.Rodrigues(rvec)
+    T = np.eye(4)
+    T[:3, :3] = R
+    T[:3, 3] = tvec.flatten()
+    return T
+
+
+def invert_transform(T: np.ndarray) -> np.ndarray:
+    R = T[:3, :3]
+    t = T[:3, 3]
+    T_inv = np.eye(4)
+    T_inv[:3, :3] = R.T
+    T_inv[:3, 3] = -R.T @ t
+    return T_inv
+
+
+def trimmed_mean(values: np.ndarray, trim_fraction: float = 0.2) -> np.ndarray:
+    """
+    نرفض أسوأ trim_fraction من القيم (الأبعد عن المتوسط) قبل الحساب النهائي
+    هذا يحمي من outliers الناتجة عن كشف زوايا خاطئ بإطار معين
+    """
+    if len(values) <= 3:
+        return np.median(values, axis=0)
+
+    center = np.median(values, axis=0)
+    dists = np.linalg.norm(values - center, axis=1)
+    n_keep = max(3, int(len(values) * (1 - trim_fraction)))
+    keep_idx = np.argsort(dists)[:n_keep]
+    return np.mean(values[keep_idx], axis=0)
+
+
+# ═══════════════ Main Endpoint ═══════════════
+
+@app.post("/triangulate", response_model=TriangulateResponse)
+def triangulate(req: TriangulateRequest):
+    if not req.frames:
+        raise HTTPException(400, "لا توجد frames للمعالجة")
+
+    # نحسب pose كل ماركر بكل frame
+    # per_frame_poses[frame_idx] = { marker_id: T_cam_to_marker }
+    per_frame_poses: List[Dict[int, np.ndarray]] = []
+
+    for frame in req.frames:
+        cx, cy = frame.width / 2.0, frame.height / 2.0
+        camera_matrix = np.array([
+            [req.focal_length_px, 0, cx],
+            [0, req.focal_length_px, cy],
+            [0, 0, 1]
+        ], dtype=np.float64)
+
+        frame_poses: Dict[int, np.ndarray] = {}
+        for m in frame.markers:
+            if len(m.corners) != 4:
+                continue
+            corners_px = np.array(
+                [[c.x, c.y] for c in m.corners], dtype=np.float64
+            )
+            T = solve_marker_pose(corners_px, camera_matrix, req.marker_size_mm)
+            if T is not None:
+                frame_poses[m.id] = T
+
+        if frame_poses:
+            per_frame_poses.append(frame_poses)
+
+    if not per_frame_poses:
+        return TriangulateResponse(
+            success=False, markers=[], total_frames_used=0,
+            message="ما قدرنا نحسب pose لأي ماركر بأي frame"
+        )
+
+    # نختار الماركر المرجعي = الأكثر ظهوراً عبر كل الـ frames
+    id_counts: Dict[int, int] = {}
+    for fp in per_frame_poses:
+        for mid in fp:
+            id_counts[mid] = id_counts.get(mid, 0) + 1
+
+    ref_id = max(id_counts, key=id_counts.get)
+
+    # لكل ماركر ثاني، نجمع كل تقديرات T_ref_to_marker عبر الـ frames
+    relative_translations: Dict[int, List[np.ndarray]] = {}
+
+    for fp in per_frame_poses:
+        if ref_id not in fp:
             continue
-        pts1 = np.float32([kps_list[i-1][m.queryIdx].pt for m in matches])
-        pts2 = np.float32([kps_list[i][m.trainIdx].pt for m in matches])
-        E, mask = cv2.findEssentialMat(pts1, pts2, K, method=cv2.RANSAC, prob=0.999, threshold=1.0)
-        if E is None:
-            poses.append((prev_R.copy(), prev_t.copy()))
-            continue
-        _, R, t, _ = cv2.recoverPose(E, pts1, pts2, K, mask=mask)
-        curr_R = R @ prev_R
-        curr_t = R @ prev_t + t
-        poses.append((curr_R.copy(), curr_t.copy()))
-        prev_R, prev_t = curr_R, curr_t
-    return poses
+        T_cam_ref = fp[ref_id]
+        T_ref_cam = invert_transform(T_cam_ref)
 
-def triangulate(images, poses, K, num_implants):
-    observations = {i:[] for i in range(num_implants)}
-    proj_matrices = []
-    for img_idx,(R,t) in enumerate(poses):
-        proj_matrices.append(K @ np.hstack([R,t]))
-        for imp_idx,(cx,cy,_) in enumerate(find_scan_bodies(images[img_idx], num_implants)):
-            observations[imp_idx].append({"img_idx":img_idx,"pt":(cx,cy)})
-    results = []
-    for imp_idx in range(num_implants):
-        obs = observations[imp_idx]
-        best_pos, best_score = None, -1
-        for i in range(len(obs)):
-            for j in range(i+1, len(obs)):
-                oi,oj = obs[i],obs[j]
-                Pi = proj_matrices[oi["img_idx"]]
-                Pj = proj_matrices[oj["img_idx"]]
-                pt1 = np.array([[oi["pt"][0]],[oi["pt"][1]]], dtype=np.float64)
-                pt2 = np.array([[oj["pt"][0]],[oj["pt"][1]]], dtype=np.float64)
-                pts4d = cv2.triangulatePoints(Pi, Pj, pt1, pt2)
-                if pts4d[3,0] == 0: continue
-                pt3d = pts4d[:3,0]/pts4d[3,0]
-                score = np.linalg.norm(proj_matrices[oi["img_idx"]][:,3] - proj_matrices[oj["img_idx"]][:,3])
-                if score > best_score:
-                    best_score = score
-                    best_pos = pt3d
-        if best_pos is not None:
-            results.append({"x":round(float(best_pos[0]),3),"y":round(float(best_pos[1]),3),"z":round(float(best_pos[2]),3)})
-        else:
-            results.append({"x":0.0,"y":0.0,"z":0.0})
-    return results
+        for mid, T_cam_m in fp.items():
+            if mid == ref_id:
+                continue
+            T_ref_to_m = T_ref_cam @ T_cam_m
+            pos = T_ref_to_m[:3, 3]
+            relative_translations.setdefault(mid, []).append(pos)
 
-@app.get("/")
-def root():
-    return {"status":"ImplantScan API running","version":"1.0"}
+    # المرجع نفسه بموضع (0,0,0)
+    results: List[MarkerResult] = [
+        MarkerResult(id=ref_id, x=0.0, y=0.0, z=0.0,
+                     num_observations=id_counts[ref_id], std_dev_mm=0.0)
+    ]
+
+    for mid, positions in relative_translations.items():
+        arr = np.array(positions)
+        final_pos = trimmed_mean(arr, trim_fraction=0.2)
+        std_dev = float(np.std(np.linalg.norm(arr - final_pos, axis=1)))
+
+        results.append(MarkerResult(
+            id=mid,
+            x=float(final_pos[0]),
+            y=float(final_pos[1]),
+            z=float(final_pos[2]),
+            num_observations=len(positions),
+            std_dev_mm=round(std_dev, 4)
+        ))
+
+    results.sort(key=lambda r: r.id)
+
+    return TriangulateResponse(
+        success=True,
+        reference_marker_id=ref_id,
+        markers=results,
+        total_frames_used=len(per_frame_poses),
+        message=f"تم حساب {len(results)} ماركر من {len(per_frame_poses)} إطار"
+    )
+
 
 @app.get("/health")
 def health():
-    return {"status":"ok"}
-
-@app.post("/analyze")
-async def analyze(images: List[UploadFile]=File(...), num_implants: int=Form(2)):
-    try:
-        if len(images) < 5:
-            return JSONResponse(status_code=400, content={"error":"تحتاج على الأقل 5 صور"})
-        imgs = []
-        for f in images:
-            data = await f.read()
-            img = decode_image(data)
-            if img is not None:
-                imgs.append(img)
-        if len(imgs) < 5:
-            return JSONResponse(status_code=400, content={"error":"فشل قراءة الصور"})
-        h,w = imgs[0].shape[:2]
-        K = get_ipad_K(w,h)
-        poses = estimate_poses(imgs, K)
-        positions = triangulate(imgs, poses, K, num_implants)
-        results = []
-        for i,pos in enumerate(positions):
-            results.append({"id":i+1,"label":f"زراعة {i+1}","x":pos["x"],"y":pos["y"],"z":pos["z"],"angle_x":0.0,"angle_y":0.0,"angle_z":0.0,"quality":85,"images_used":len(imgs)})
-        return {"success":True,"implants":results,"images_processed":len(imgs),"accuracy_mm":0.1}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error":str(e),"trace":traceback.format_exc()})
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    return {"status": "ok", "version": "2.0-triangulation"}
